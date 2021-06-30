@@ -1,0 +1,601 @@
+---
+title: "BankChurn"
+author: "John Lee"
+date: "4/18/2021"
+output:
+  pdf_document: default
+  word_document: default
+---
+##Data Processing
+```{r}
+library(readr)
+library(tidyverse)
+library(patchwork)
+library(caret)
+library(vcd)
+library(gridExtra)
+library(knitr)
+library(corrplot)
+library(scales)
+library(lme4)
+library(DMwR2)
+library(InformationValue)
+library(ROCR)
+library(rpart)
+library(randomForest)
+library(MASS)
+library(ggmosaic)
+library(e1071)
+library(ranger)
+library(penalized)
+library(rpart.plot)
+library(ggcorrplot)
+library(caTools)
+library(plyr)
+library(corrplot)
+library(ggplot2)
+library(party)
+library(vip)
+```
+
+
+```{r}
+churn <- read_csv("C:/Users/14044/Desktop/Wake Forest/7095/Excel Files/BankChurners_clean.csv");
+str(churn)
+```
+
+##Data Cleaning
+#---Change Attrition_Flag encoding: Existing Customer = 0, Attrition Customer = 1
+```{r}
+churn <- churn %>% mutate(Attrition_Flag = recode(Attrition_Flag, "Attrited Customer" = 1, "Existing Customer" = 0))
+
+```
+#---Factor conversion
+```{r}
+
+churn$Attrition_Flag <- as_factor(churn$Attrition_Flag)
+
+churn$Gender <- as_factor(churn$Gender)
+
+churn$Education_Level <- as.factor(churn$Education_Level)
+                                   
+churn$Marital_Status <- as.factor(churn$Marital_Status)
+
+churn$Income_Category <- as.factor(churn$Income_Category)
+
+churn$Card_Category <- as.factor(churn$Card_Category)
+str(churn)
+```
+#---Check to see if there's any missing data
+```{r}
+sapply(churn, function(x) sum(is.na(x)))
+```
+
+##Exploratory Data Analysis
+```{r}
+summary(churn)
+```
+
+```{r}
+ggplot(churn, aes(Attrition_Flag, fill = Attrition_Flag)) +
+  geom_bar() +
+  theme(legend.position = 'none')
+```
+
+```{r}
+table(churn$Attrition_Flag)
+```
+
+```{r}
+round(prop.table(table(churn$Attrition_Flag)),3)
+```
+
+#---Continuous Variable Distribution--- 
+```{r}
+churn %>%
+  keep(is.numeric) %>%
+  gather() %>%
+  ggplot() +
+  geom_histogram(mapping = aes(x=value,fill=key), color="black") +
+  facet_wrap(~ key, scales = "free") +
+  theme_minimal() +
+  theme(legend.position = 'none')
+```
+
+#---Find correlations between columns---
+```{r}
+numeric.var <- sapply(churn, is.numeric)
+corr.matrix <- cor(churn[,numeric.var])
+corrplot(corr.matrix, main="\n\nCorrelation Plot for Numerical Variables", method="number")
+```
+
+#---Remove high correlating numerical variables---
+```{r}
+churn <- subset(churn, select = -c(Months_on_book, Total_Trans_Ct, Total_Revolving_Bal))
+```
+
+#---Continuous Variable Exploration
+```{r}
+#---Age---
+age_hist <- ggplot(churn, aes(x=Customer_Age, fill = Attrition_Flag)) +
+  geom_histogram(binwidth = 5) + 
+  theme_minimal() + 
+  scale_x_continuous(breaks = seq(0,100, by=10))
+
+age_boxplot <- ggplot(churn, aes(x= Attrition_Flag, y = Customer_Age, fill = Attrition_Flag)) +
+  geom_boxplot() + 
+  theme_minimal() + 
+  theme(legend.position = 'none')
+
+age_hist 
+age_boxplot
+```
+
+
+```{r}
+#---Total Revovling Balance---
+credit_limit_hist <- ggplot(churn, aes(x=Credit_Limit, fill = Attrition_Flag)) +
+  geom_histogram() + 
+  theme_minimal() + 
+  scale_x_continuous(breaks = seq(0,50000, by=10000))
+
+credit_limit_boxplot <- ggplot(churn, aes(x= Attrition_Flag, y = Credit_Limit, fill = Attrition_Flag)) +
+  geom_boxplot() + 
+  theme_minimal() + 
+  theme(legend.position = 'none')
+
+credit_limit_hist
+credit_limit_boxplot
+```
+
+
+```{r}
+#---Dependent_count---
+Dep_count_hist <- ggplot(churn, aes(x=Dependent_count, fill = Attrition_Flag)) +
+  geom_histogram() + 
+  theme_minimal() + 
+  scale_x_continuous(breaks = seq(0,10, by=1))
+
+Dep_count_boxplot <- ggplot(churn, aes(x= Attrition_Flag, y = Dependent_count, fill = Attrition_Flag)) +
+  geom_boxplot() + 
+  theme_minimal() + 
+  theme(legend.position = 'none')
+
+Dep_count_hist
+Dep_count_boxplot
+
+```
+
+
+```{r}
+#---Total Relationship Count
+Tot_relat_hist <- ggplot(churn, aes(x=Total_Relationship_Count, fill = Attrition_Flag)) +
+  geom_histogram() + 
+  theme_minimal() + 
+  scale_x_continuous(breaks = seq(0,10, by=1))
+
+Tot_relat_boxplot <- ggplot(churn, aes(x= Attrition_Flag, y = Total_Relationship_Count, fill = Attrition_Flag)) +
+  geom_boxplot() + 
+  theme_minimal() + 
+  theme(legend.position = 'none')
+
+Tot_relat_hist
+Tot_relat_boxplot
+
+```
+
+
+```{r}
+#---Months Inactive 12 mon
+Months_Inactive_hist <- ggplot(churn, aes(x=Months_Inactive_12_mon, fill = Attrition_Flag)) +
+  geom_histogram() + 
+  theme_minimal() + 
+  scale_x_continuous(breaks = seq(0,10, by=1))
+
+Months_Inactive_boxplot <- ggplot(churn, aes(x= Attrition_Flag, y = Months_Inactive_12_mon, fill = Attrition_Flag)) +
+  geom_boxplot() + 
+  theme_minimal() + 
+  theme(legend.position = 'none')
+
+Months_Inactive_hist
+Months_Inactive_boxplot
+
+```
+
+
+```{r}
+#---Contacts_Count_12_mon---
+Contract_count_hist <- ggplot(churn, aes(x=Contacts_Count_12_mon, fill = Attrition_Flag)) +
+  geom_histogram() + 
+  theme_minimal() + 
+  scale_x_continuous(breaks = seq(0,10, by=1))
+
+Contract_count_boxplot <- ggplot(churn, aes(x= Attrition_Flag, y = Contacts_Count_12_mon, fill = Attrition_Flag)) +
+  geom_boxplot() + 
+  theme_minimal() + 
+  theme(legend.position = 'none')
+
+Contract_count_hist
+Contract_count_boxplot
+
+```
+
+
+```{r}
+#---Avg_Open_To_Buy---
+Avg_buy_hist <- ggplot(churn, aes(x=Avg_Open_To_Buy, fill = Attrition_Flag)) +
+  geom_histogram() + 
+  theme_minimal() + 
+  scale_x_continuous(breaks = seq(0,50000, by=10000))
+
+Avg_buy_boxplot <- ggplot(churn, aes(x= Attrition_Flag, y = Avg_Open_To_Buy, fill = Attrition_Flag)) +
+  geom_boxplot() + 
+  theme_minimal() + 
+  theme(legend.position = 'none')
+
+Avg_buy_hist
+Avg_buy_boxplot
+```
+
+
+```{r}
+#---Total_Amt_Chng_Q4_Q1---
+Total_Amt_Chng_Q4_Q1_hist <- ggplot(churn, aes(x=Total_Amt_Chng_Q4_Q1, fill = Attrition_Flag)) +
+  geom_histogram() + 
+  theme_minimal() + 
+  scale_x_continuous(breaks = seq(0,50000, by=10000))
+
+Total_Amt_Chng_Q4_Q1_boxplot <- ggplot(churn, aes(x= Attrition_Flag, y = Total_Amt_Chng_Q4_Q1, fill = Attrition_Flag)) +
+  geom_boxplot() + 
+  theme_minimal() + 
+  theme(legend.position = 'none')
+
+Total_Amt_Chng_Q4_Q1_hist
+Total_Amt_Chng_Q4_Q1_boxplot
+```
+
+```{r}
+#---Total_Trans_Amt---
+Total_Trans_Amt_hist <- ggplot(churn, aes(x=Total_Trans_Amt, fill = Attrition_Flag)) +
+  geom_histogram() + 
+  theme_minimal() + 
+  scale_x_continuous(breaks = seq(0,50000, by=10000))
+
+Total_Trans_Amt_boxplot <- ggplot(churn, aes(x= Attrition_Flag, y = Total_Trans_Amt, fill = Attrition_Flag)) +
+  geom_boxplot() + 
+  theme_minimal() + 
+  theme(legend.position = 'none')
+
+Total_Trans_Amt_hist
+Total_Trans_Amt_boxplot
+```
+
+
+```{r}
+#---Total_Ct_Chng_Q4_Q1---
+Total_Ct_Chng_Q4_Q1_hist <- ggplot(churn, aes(x=Total_Ct_Chng_Q4_Q1, fill = Attrition_Flag)) +
+  geom_histogram() + 
+  theme_minimal() + 
+  scale_x_continuous(breaks = seq(0,50000, by=10000))
+
+Total_Ct_Chng_Q4_Q1_boxplot <- ggplot(churn, aes(x= Attrition_Flag, y = Total_Ct_Chng_Q4_Q1, fill = Attrition_Flag)) +
+  geom_boxplot() + 
+  theme_minimal() + 
+  theme(legend.position = 'none')
+
+Total_Ct_Chng_Q4_Q1_hist
+Total_Ct_Chng_Q4_Q1_boxplot
+```
+
+
+```{r}
+#---Avg_Utilization_Ratio---
+Avg_Utilization_Ratio_hist <- ggplot(churn, aes(x=Avg_Utilization_Ratio, fill = Attrition_Flag)) +
+  geom_histogram() + 
+  theme_minimal() + 
+  scale_x_continuous(breaks = seq(0,50000, by=10000))
+
+Avg_Utilization_Ratio_boxplot <- ggplot(churn, aes(x= Attrition_Flag, y = Avg_Utilization_Ratio, fill = Attrition_Flag)) +
+  geom_boxplot() + 
+  theme_minimal() + 
+  theme(legend.position = 'none')
+
+Avg_Utilization_Ratio_hist
+Avg_Utilization_Ratio_boxplot
+```
+
+##---Categorical Variable Distribution---
+```{r}
+p1 <- ggplot(churn, aes(x=Gender)) + ggtitle("Gender") + xlab("Gender") +
+  geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Percentage") + coord_flip() + theme_minimal()
+p2 <- ggplot(churn, aes(x=Education_Level)) + ggtitle("Education Level") + xlab("Education Level") + 
+  geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Percentage") + coord_flip() + theme_minimal()
+p3 <- ggplot(churn, aes(x=Marital_Status)) + ggtitle("Marital Status") + xlab("Marital Status") + 
+  geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Percentage") + coord_flip() + theme_minimal()
+p4 <- ggplot(churn, aes(x=Income_Category)) + ggtitle("Income Category") + xlab("Income Category") +
+  geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Percentage") + coord_flip() + theme_minimal()
+p5 <- ggplot(churn, aes(x=Card_Category)) + ggtitle("Card Category") + xlab("Card Category") +
+  geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Percentage") + coord_flip() + theme_minimal()
+grid.arrange(p1, p2, p3, p4, p5, ncol=2)
+```
+
+#---Categorical Variable Exploration---
+
+```{r}
+gender_graph <- churn %>%
+  dplyr::select(Gender, Attrition_Flag) %>% 
+  table(.) %>% 
+  as.data.frame() %>% 
+  ggplot(.) +
+  ggmosaic::geom_mosaic(aes(weight = Freq, x = product(Gender), fill = Attrition_Flag)) +
+  ggthemes::theme_tufte() +
+  scale_fill_brewer(type = "qual") +
+  labs(x = 'Gender')
+
+edc_lvl_graph <- churn %>%
+  dplyr::select(Education_Level, Attrition_Flag) %>% 
+  table(.) %>% 
+  as.data.frame() %>% 
+  ggplot(.) +
+  ggmosaic::geom_mosaic(aes(weight = Freq, x = product(Education_Level), fill = Attrition_Flag)) +
+  ggthemes::theme_tufte() +
+  scale_fill_brewer(type = "qual") +
+  labs(x = 'Education_level')
+
+Marital_status_graph <- churn %>%
+  dplyr::select(Marital_Status, Attrition_Flag) %>% 
+  table(.) %>% 
+  as.data.frame() %>% 
+  ggplot(.) +
+  ggmosaic::geom_mosaic(aes(weight = Freq, x = product(Marital_Status), fill = Attrition_Flag)) +
+  ggthemes::theme_tufte() +
+  scale_fill_brewer(type = "qual") +
+  labs(x = 'Marital_Status')
+
+Income_Category_graph <- churn %>%
+  dplyr::select(Income_Category, Attrition_Flag) %>% 
+  table(.) %>% 
+  as.data.frame() %>% 
+  ggplot(.) +
+  ggmosaic::geom_mosaic(aes(weight = Freq, x = product(Income_Category), fill = Attrition_Flag)) +
+  ggthemes::theme_tufte() +
+  scale_fill_brewer(type = "qual") +
+  labs(x = 'Income_Category')
+
+Card_Category_graph <- churn %>%
+  dplyr::select(Card_Category, Attrition_Flag) %>% 
+  table(.) %>% 
+  as.data.frame() %>% 
+  ggplot(.) +
+  ggmosaic::geom_mosaic(aes(weight = Freq, x = product(Card_Category), fill = Attrition_Flag)) +
+  ggthemes::theme_tufte() +
+  scale_fill_brewer(type = "qual") +
+  labs(x = 'Card_Category')
+  
+
+(gender_graph | edc_lvl_graph) / (Marital_status_graph | Income_Category_graph ) / (Card_Category_graph)
+```
+
+#---chi-square test---
+```{r}
+chi.square <- vector()
+p.value <- vector()
+cateVar <- churn %>% 
+  dplyr::select(-Attrition_Flag) %>% 
+  keep(is.factor)
+
+for (i in 1:length(cateVar)) {
+ p.value[i] <- chisq.test(churn$Attrition_Flag, unname(unlist(cateVar[i])), correct = FALSE)[3]$p.value
+ chi.square[i] <- unname(chisq.test(churn$Attrition_Flag, unname(unlist(cateVar[i])), correct = FALSE)[1]$statistic)
+}
+
+chi_sqaure_test <- tibble(variable = names(cateVar)) %>% 
+  add_column(chi.square = chi.square) %>% 
+  add_column(p.value = p.value)
+knitr::kable(chi_sqaure_test)
+```
+
+##Predictive Analysis
+```{r}
+#---split data set to train and test
+set.seed(1234)
+sample_set <- churn %>%
+  pull(.) %>% 
+  sample.split(SplitRatio = .7)
+
+bankTrain <- subset(churn, sample_set == TRUE)
+bankTest <- subset(churn, sample_set == FALSE)
+```
+
+```{r}
+#---check distribution of data
+round(prop.table(table(churn$Attrition_Flag)),3)
+round(prop.table(table(bankTrain$Attrition_Flag)),3)
+round(prop.table(table(bankTrain$Attrition_Flag)),3)
+```
+
+#---Logistic Regression
+```{r}
+## Train the model
+logit.mod <- glm(Attrition_Flag ~., family = binomial(link = 'logit'), data = bankTrain)
+
+## Look at the result
+summary(logit.mod)
+```
+
+```{r}
+#---predict outcomes against the test data
+logit.pred.prob <- predict(logit.mod, bankTest, type = 'response')
+logit.pred <- as.factor(ifelse(logit.pred.prob > 0.5, 1, 0))
+head(bankTest,10)
+head(logit.pred.prob,10)
+```
+
+```{r}
+#---confusion matrix of logistic regression
+caret::confusionMatrix(logit.pred, bankTest$Attrition_Flag, positive = "1")
+```
+
+#---Decision Tree
+```{r}
+ctrl <-
+  trainControl(method = "cv", #cross-validation
+               number = 10, #10-fold
+               selectionFunction = "best")
+
+grid <- 
+  expand.grid(
+    .cp = seq(from=0.0001, to=0.005, by=0.0001)
+  )
+set.seed(1234)
+tree.mod <-
+  train(
+    Attrition_Flag ~.,
+    data = bankTrain,
+    method = "rpart",
+    metric = "Kappa",
+    trControl = ctrl,
+    tuneGrid = grid
+  )
+
+tree.mod
+```
+
+```{r}
+#---predict outcomes against the test data
+tree.pred.prob <- predict(tree.mod, bankTest, type = "prob")
+tree.pred <- predict(tree.mod, bankTest, type = "raw")
+```
+
+```{r}
+#---confusion matrix of decision tree
+caret::confusionMatrix(tree.pred, bankTest$Attrition_Flag, positive = "1")
+```
+
+#---Random Forest Model
+```{r}
+## Create a control object.
+ctrl <- trainControl(method = "cv",
+                     number = 10,
+                     selectionFunction = "best")
+
+## Grid search based on the available parameters.
+grid <- expand.grid(.mtry = c(1:8))
+
+## Random forest model
+rf.mod <- 
+  train(Attrition_Flag ~.,
+        data = bankTrain,
+        method = 'rf',
+        metric = 'Kappa',
+        trControl = ctrl,
+        tuneGrid = grid)
+
+rf.mod
+```
+
+```{r}
+#---make predictions
+rf.pred <- predict(rf.mod, bankTest, type = "raw")
+rf.pred.prob <- predict(rf.mod, bankTest, type = "prob")
+```
+
+```{r}
+#---confusion matrix of Random Forest Model
+caret::confusionMatrix(rf.pred, bankTest$Attrition_Flag, positive = "1")
+```
+
+
+##Compare the models
+```{r}
+## Logistic Regression
+test <- bankTest$Attrition_Flag
+pred <- logit.pred
+prob <- logit.pred.prob
+
+# Logistic Regression ROC curve
+roc.pred <- prediction(predictions = prob, labels = test)
+roc.perf <- performance(roc.pred, measure = "tpr", x.measure = "fpr")
+plot(roc.perf, main = "ROC Curve for Bank Churn Prediction Approaches", col = 2, lwd = 2)
+abline(a = 0, b = 1, lwd = 3, lty = 2, col = 1)
+
+## Logistic Regression Performance Metrics
+accuracy <- mean(test == pred)
+precision <- posPredValue(pred, test, positive = "1")
+recall <- caret::sensitivity(pred, test, positive = "1")
+fmeasure <- (2 * precision * recall)/(precision + recall)
+confmat <- caret::confusionMatrix(pred, test, positive = "1")
+kappa <- as.numeric(confmat$overall["Kappa"])
+auc <- as.numeric(performance(roc.pred, measure = "auc")@y.values)
+comparisons <- tibble(approach="Logistic Regression", accuracy = accuracy, fmeasure = fmeasure,kappa = kappa, auc = auc)
+
+## Classification Tree
+test <- bankTest$Attrition_Flag
+pred <- tree.pred
+prob <- tree.pred.prob[,2]
+
+## Classification Tree ROC Curve
+roc.pred <- prediction(predictions = prob, labels = test)
+roc.perf <- performance(roc.pred, measure = "tpr", x.measure = "fpr")
+plot(roc.perf, col=3, lwd = 2, add=TRUE)
+
+## Classification Tree Performance Metrics
+accuracy <- mean(test == pred)
+precision <- posPredValue(pred, test, positive = "1")
+recall <- caret::sensitivity(pred, test, positive = "1")
+fmeasure <- (2 * precision * recall)/(precision + recall)
+confmat <- caret::confusionMatrix(pred, test, positive = "1")
+kappa <- as.numeric(confmat$overall["Kappa"])
+auc <- as.numeric(performance(roc.pred, measure = "auc")@y.values)
+comparisons <- comparisons %>%
+  add_row(approach="Classification Tree", accuracy = accuracy, fmeasure = fmeasure, kappa = kappa, auc = auc) 
+
+## Random Forest
+test <- bankTest$Attrition_Flag
+pred <- rf.pred
+prob <- rf.pred.prob[,2]
+
+## Random Forest ROC Curve
+roc.pred <- prediction(predictions = prob, labels = test)
+roc.perf <- performance(roc.pred, measure = "tpr", x.measure = "fpr")
+plot(roc.perf, col=4, lwd = 2, add=TRUE)
+
+## Random Forest Performance Metrics
+accuracy <- mean(test == pred)
+precision <- posPredValue(pred, test, positive = "1")
+recall <- caret::sensitivity(pred, test, positive = "1")
+fmeasure <- (2 * precision * recall)/(precision + recall)
+confmat <- caret::confusionMatrix(pred, test, positive = "1")
+kappa <- as.numeric(confmat$overall["Kappa"])
+auc <- as.numeric(performance(roc.pred, measure = "auc")@y.values)
+comparisons <- comparisons %>%
+  add_row(approach="Random Forest", accuracy = accuracy, fmeasure = fmeasure, kappa = kappa, auc = auc) 
+
+# Draw ROC legend.
+legend(0.6, 0.6, c('Logistic Regression', 'Classification Tree', 'Random Forest'), 2:5)
+```
+
+```{r}
+#---output comparison
+knitr::kable(comparisons)
+```
+
+```{r}
+#---Logistic Regression Model Features
+vip::vip(logit.mod)
+```
+
+```{r}
+#---Decsion Tree Features
+vip::vip(tree.mod)
+```
+
+```{r}
+#---Random Forest Model Features
+vip::vip(rf.mod)
+```
+
+```{r}
+vip::vip(rf.mod,5)
+```
+
